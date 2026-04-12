@@ -202,7 +202,6 @@ def main() -> None:
         )
 
     dataset = pd.read_csv(dataset_path)
-    sample_df = dataset.head(10)
 
     pipeline = ClinicalTextPipeline()
     smoke_features = pipeline.tokenize_medical_text(
@@ -211,11 +210,20 @@ def main() -> None:
     assert "C0027051" in smoke_features, "Expected UMLS CUI C0027051 for 'heart attack'."
 
     start_time = time.perf_counter()
-    processed_sample = process_dataframe(sample_df, pipeline=pipeline)
+    processed_sample = process_dataframe(dataset, pipeline=pipeline)
     elapsed_seconds = time.perf_counter() - start_time
 
-    print(f"Processed {len(processed_sample)} valid rows from head(10) in {elapsed_seconds:.2f}s.")
-    print(processed_sample[["medical_specialty", "extracted_features"]].to_string(index=False))
+    output_path = Path("processed_clinical_data.csv")
+    processed_sample.to_csv(output_path, index=False)
+
+    print(
+        "Processed "
+        f"{len(processed_sample)} valid rows from full dataset "
+        f"({len(dataset)} raw rows) in {elapsed_seconds:.2f}s."
+    )
+    print(f"Saved processed dataset to {output_path}.")
+    print("Preview (first 10 rows):")
+    print(processed_sample[["medical_specialty", "extracted_features"]].head(10).to_string(index=False))
 
 
 if __name__ == "__main__":
