@@ -1,5 +1,9 @@
 import re
+import time
+import warnings
+from pathlib import Path
 
+import pandas as pd
 from negspacy.negation import Negex  # noqa: F401
 import scispacy  # noqa: F401
 from scispacy.linking import EntityLinker  # noqa: F401
@@ -7,6 +11,11 @@ import spacy
 from confection import ConfigValidationError
 from spacy.language import Language
 from spacy.tokens import Doc, Span
+
+
+warnings.filterwarnings("ignore", category=UserWarning, module=r"spacy(\.|$)")
+warnings.filterwarnings("ignore", category=FutureWarning, module=r"spacy(\.|$)")
+warnings.filterwarnings("ignore", category=UserWarning, module=r"sklearn(\.|$)")
 
 
 class ClinicalTextPipeline:
@@ -161,13 +170,52 @@ class ClinicalTextPipeline:
         return [token.text for token in doc if not token.is_space and not token.is_punct]
 
 
+def process_dataframe(df: pd.DataFrame, pipeline: ClinicalTextPipeline | None = None) -> pd.DataFrame:
+    """Clean rows and extract clinical CUI/token features from transcriptions."""
+    required_columns = {"transcription", "medical_specialty"}
+    missing_columns = sorted(required_columns - set(df.columns))
+    if missing_columns:
+        missing = ", ".join(missing_columns)
+        raise ValueError(f"Missing required columns: {missing}")
+
+    working_df = df.dropna(subset=["transcription", "medical_specialty"]).copy()
+    working_df["medical_specialty"] = working_df["medical_specialty"].astype(str).str.strip()
+    working_df = working_df[working_df["medical_specialty"] != ""].copy()
+
+    if pipeline is None:
+        pipeline = ClinicalTextPipeline()
+
+    def _extract_features(transcription: str) -> list[str]:
+        cleaned_text = pipeline.clean_text(transcription)
+        de_identified_text = pipeline.de_identify(cleaned_text)
+        return pipeline.tokenize_medical_text(de_identified_text)
+
+    working_df["extracted_features"] = working_df["transcription"].astype(str).apply(_extract_features)
+    return working_df
+
+
 def main() -> None:
+    dataset_path = Path("mtsamples.csv")
+    if not dataset_path.exists():
+        raise FileNotFoundError(
+            f"Dataset not found at {dataset_path}. Place mtsamples.csv in the project root."
+        )
+
+    dataset = pd.read_csv(dataset_path)
+    sample_df = dataset.head(10)
+
     pipeline = ClinicalTextPipeline()
-    sample_text = "Patient presents with a heart attack."
-    cleaned = pipeline.clean_text(sample_text)
-    de_identified = pipeline.de_identify(cleaned)
-    medical_tokens = pipeline.tokenize_medical_text(de_identified)
-    print(medical_tokens)
+    smoke_features = pipeline.tokenize_medical_text(
+        pipeline.de_identify(pipeline.clean_text("Patient presents with a heart attack."))
+    )
+    assert "C0027051" in smoke_features, "Expected UMLS CUI C0027051 for 'heart attack'."
+
+    start_time = time.perf_counter()
+    processed_sample = process_dataframe(sample_df, pipeline=pipeline)
+    elapsed_seconds = time.perf_counter() - start_time
+
+    print(f"Processed {len(processed_sample)} valid rows from head(10) in {elapsed_seconds:.2f}s.")
+    print(processed_sample[["medical_specialty", "extracted_features"]].to_string(index=False))
 
 
 if __name__ == "__main__":
