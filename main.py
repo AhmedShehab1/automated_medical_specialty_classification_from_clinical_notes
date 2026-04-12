@@ -1,5 +1,6 @@
 import re
 
+from negspacy.negation import Negex  # noqa: F401
 import scispacy  # noqa: F401
 import spacy
 from confection import ConfigValidationError
@@ -39,6 +40,14 @@ class ClinicalTextPipeline:
                 "uv pip install --python .venv/bin/python --no-deps "
                 "https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.4/en_core_sci_sm-0.5.4.tar.gz"
             ) from exc
+
+        if "negex" not in self.nlp.pipe_names:
+            negex_config: dict[str, list[str]] = {"ent_types": ["ENTITY"]}
+            ner_labels = list(self.nlp.pipe_labels.get("ner", ()))
+            if ner_labels and "ENTITY" not in ner_labels:
+                negex_config["ent_types"] = ner_labels
+            self.nlp.add_pipe("negex", config=negex_config, last=True)
+
         self.is_ready = True
 
     def de_identify(self, text: str) -> str:
@@ -58,16 +67,16 @@ class ClinicalTextPipeline:
         cleaned_text = re.sub(r"\s+", " ", cleaned_text)
         return cleaned_text.strip()
 
-    def _merge_adjacent_entities(self, doc: Doc) -> list[Span]:
+    def _merge_adjacent_entities(self, doc: Doc) -> list[list[Span]]:
         """Join touching entities so multi-token medical concepts stay intact."""
-        merged_entities: list[Span] = []
+        merged_entity_groups: list[list[Span]] = []
 
         for entity in doc.ents:
-            if not merged_entities:
-                merged_entities.append(entity)
+            if not merged_entity_groups:
+                merged_entity_groups.append([entity])
                 continue
 
-            previous = merged_entities[-1]
+            previous = merged_entity_groups[-1][-1]
             between_tokens = doc[previous.end : entity.start]
             should_merge = all(
                 token.is_space
@@ -77,30 +86,56 @@ class ClinicalTextPipeline:
             )
 
             if should_merge:
-                merged_entities[-1] = doc[previous.start : entity.end]
+                merged_entity_groups[-1].append(entity)
             else:
-                merged_entities.append(entity)
+                merged_entity_groups.append([entity])
 
-        return merged_entities
+        return merged_entity_groups
 
     def tokenize_medical_text(self, text: str) -> list[str]:
         """Extract biomedical entities, falling back to regular tokens if needed."""
         doc = self.nlp(text)
-        merged_entities = self._merge_adjacent_entities(doc)
-        entity_tokens = [entity.text.strip() for entity in merged_entities if entity.text.strip()]
-        prioritized_entities = [token for token in entity_tokens if len(token.split()) > 1 or any(char.isdigit() for char in token)]
+        merged_entity_groups = self._merge_adjacent_entities(doc)
+        has_negex_extension = Span.has_extension("negex")
+
+        entity_candidates: list[tuple[str, bool]] = []
+        for group in merged_entity_groups:
+            merged_span = doc[group[0].start : group[-1].end]
+            is_negated = has_negex_extension and any(bool(entity._.negex) for entity in group)
+            entity_candidates.append((merged_span.text.strip(), is_negated))
+
+        # Option A: filter negated entities from the feature space.
+        # Future enhancement (Option B): keep terms and add a "_NEG" suffix.
+        affirmed_entity_tokens = [
+            entity_text
+            for entity_text, is_negated in entity_candidates
+            if entity_text and not is_negated
+        ]
+
+        prioritized_entities = [
+            token
+            for token in affirmed_entity_tokens
+            if len(token.split()) > 1 or any(char.isdigit() for char in token)
+        ]
         if prioritized_entities:
             # Keep output stable and avoid duplicate entity strings.
             return list(dict.fromkeys(prioritized_entities))
-        if entity_tokens:
-            return list(dict.fromkeys(entity_tokens))
+
+        if affirmed_entity_tokens:
+            return list(dict.fromkeys(affirmed_entity_tokens))
+
+        if entity_candidates:
+            return []
 
         return [token.text for token in doc if not token.is_space and not token.is_punct]
 
 
 def main() -> None:
     pipeline = ClinicalTextPipeline()
-    sample_text = "Patient presents with acute myocardial infarction and Type-2 Diabetes."
+    sample_text = (
+        "Patient presents with acute myocardial infarction but denies any shortness of breath. "
+        "No history of Type-2 Diabetes."
+    )
     cleaned = pipeline.clean_text(sample_text)
     de_identified = pipeline.de_identify(cleaned)
     medical_tokens = pipeline.tokenize_medical_text(de_identified)
