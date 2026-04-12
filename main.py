@@ -2,6 +2,7 @@ import re
 
 from negspacy.negation import Negex  # noqa: F401
 import scispacy  # noqa: F401
+from scispacy.linking import EntityLinker  # noqa: F401
 import spacy
 from confection import ConfigValidationError
 from spacy.language import Language
@@ -40,6 +41,13 @@ class ClinicalTextPipeline:
                 "uv pip install --python .venv/bin/python --no-deps "
                 "https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.4/en_core_sci_sm-0.5.4.tar.gz"
             ) from exc
+
+        if "scispacy_linker" not in self.nlp.pipe_names:
+            self.nlp.add_pipe(
+                "scispacy_linker",
+                config={"resolve_abbreviations": True, "linker_name": "umls"},
+                last=True,
+            )
 
         if "negex" not in self.nlp.pipe_names:
             negex_config: dict[str, list[str]] = {"ent_types": ["ENTITY"]}
@@ -92,37 +100,60 @@ class ClinicalTextPipeline:
 
         return merged_entity_groups
 
+    def _get_top_group_cui(self, entity_group: list[Span]) -> str | None:
+        """Return the best CUI candidate for a grouped entity span."""
+        if not Span.has_extension("kb_ents"):
+            return None
+
+        ranked_candidates: list[tuple[int, float, str]] = []
+        for entity in entity_group:
+            kb_entities = list(entity._.kb_ents)
+            if not kb_entities:
+                continue
+
+            top_cui, top_score = kb_entities[0]
+            ranked_candidates.append((entity.end - entity.start, float(top_score), str(top_cui)))
+
+        if not ranked_candidates:
+            return None
+
+        ranked_candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return ranked_candidates[0][2]
+
     def tokenize_medical_text(self, text: str) -> list[str]:
-        """Extract biomedical entities, falling back to regular tokens if needed."""
+        """Extract affirmed biomedical entities as CUIs with text fallback."""
         doc = self.nlp(text)
         merged_entity_groups = self._merge_adjacent_entities(doc)
         has_negex_extension = Span.has_extension("negex")
 
-        entity_candidates: list[tuple[str, bool]] = []
+        entity_candidates: list[tuple[str, bool, str | None]] = []
         for group in merged_entity_groups:
             merged_span = doc[group[0].start : group[-1].end]
             is_negated = has_negex_extension and any(bool(entity._.negex) for entity in group)
-            entity_candidates.append((merged_span.text.strip(), is_negated))
+            top_cui = self._get_top_group_cui(group)
+            entity_candidates.append((merged_span.text.strip(), is_negated, top_cui))
 
         # Option A: filter negated entities from the feature space.
         # Future enhancement (Option B): keep terms and add a "_NEG" suffix.
-        affirmed_entity_tokens = [
-            entity_text
-            for entity_text, is_negated in entity_candidates
+        affirmed_entity_features = [
+            top_cui if top_cui else entity_text
+            for entity_text, is_negated, top_cui in entity_candidates
             if entity_text and not is_negated
         ]
 
-        prioritized_entities = [
-            token
-            for token in affirmed_entity_tokens
-            if len(token.split()) > 1 or any(char.isdigit() for char in token)
+        prioritized_features = [
+            top_cui if top_cui else entity_text
+            for entity_text, is_negated, top_cui in entity_candidates
+            if entity_text
+            and not is_negated
+            and (len(entity_text.split()) > 1 or any(char.isdigit() for char in entity_text))
         ]
-        if prioritized_entities:
+        if prioritized_features:
             # Keep output stable and avoid duplicate entity strings.
-            return list(dict.fromkeys(prioritized_entities))
+            return list(dict.fromkeys(prioritized_features))
 
-        if affirmed_entity_tokens:
-            return list(dict.fromkeys(affirmed_entity_tokens))
+        if affirmed_entity_features:
+            return list(dict.fromkeys(affirmed_entity_features))
 
         if entity_candidates:
             return []
@@ -132,10 +163,7 @@ class ClinicalTextPipeline:
 
 def main() -> None:
     pipeline = ClinicalTextPipeline()
-    sample_text = (
-        "Patient presents with acute myocardial infarction but denies any shortness of breath. "
-        "No history of Type-2 Diabetes."
-    )
+    sample_text = "Patient presents with a heart attack."
     cleaned = pipeline.clean_text(sample_text)
     de_identified = pipeline.de_identify(cleaned)
     medical_tokens = pipeline.tokenize_medical_text(de_identified)
