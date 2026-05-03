@@ -17,7 +17,6 @@ Instead of just training the model once, we used a Logistic Regression algorithm
 ### 4. Final Evaluation
 
 Once we found the optimal settings, we gave the model a "final exam" using the 20% of the data we had hidden away from the very beginning. The model achieved an impressive 88% overall accuracy. To fully understand its performance, we generated a detailed classification report (Precision, Recall, F1-Score) and plotted a visual Confusion Matrix to see exactly where the model excelled and where it occasionally mixed up the medical specialties.
----------------------------------------------------------------------------------------------------------------------------------------------------------
 
 
 
