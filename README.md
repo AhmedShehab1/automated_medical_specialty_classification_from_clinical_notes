@@ -1,3 +1,4 @@
+```mermaid
 flowchart TD
     %% Stage 1
     subgraph Stage 1: Data Ingestion & Preprocessing
@@ -44,6 +45,7 @@ flowchart TD
     class A,D,O,P default;
     class B,E,F,H,I,J,K,L,M process;
     class C,G,N decision;
+```
 
 # **Building the Logistic Regression Model**
 
