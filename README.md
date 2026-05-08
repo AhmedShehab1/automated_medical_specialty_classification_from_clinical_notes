@@ -1,6 +1,6 @@
 ```mermaid
 %%{init: {'theme': 'dark'}}%%
-flowchart LR
+flowchart TD
     %% Stage 1: Preprocessing
     A[(Raw Transcriptions)] --> B[scispacy NLP]
     B --> C{Biological Filter}
