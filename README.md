@@ -1,50 +1,32 @@
 ```mermaid
-flowchart TD
-    %% Stage 1
-    subgraph Stage 1: Data Ingestion & Preprocessing
-        A[(Raw Clinical Transcriptions)] --> B[scispacy NLP Pipeline]
-        B --> C{Biological Filter}
-        C -->|Keep 4 Target Classes| D[Cleaned Text Data]
-    end
+%%{init: {'theme': 'dark'}}%%
+flowchart LR
+    %% Stage 1: Preprocessing
+    A[(Raw Transcriptions)] --> B[scispacy NLP]
+    B --> C{Biological Filter}
+    C -->|4 Classes| D[Cleaned Data]
 
-    %% Stage 2
-    subgraph Stage 2: Feature Engineering
-        D --> E[Regex Text Cleaning]
-        E --> F[TF-IDF Vectorization & Normalization]
-    end
+    %% Stage 2: Vectorization
+    D --> E[Regex Cleaning]
+    E --> F[TF-IDF Vectorizer]
 
-    %% Stage 3
-    subgraph Stage 3: Data Balancing Strategy
-        F --> G{Class Imbalance Mitigation}
-        G -->|Algorithmic Penalization| H[class_weight='balanced']
-        G -->|Synthetic Generation| I[SMOTE Oversampling]
-    end
+    %% Stage 3: Balancing
+    F --> G{Imbalance Fix}
+    G -->|Algorithmic| H[class_weight='balanced']
+    G -->|Synthetic| I[SMOTE Oversampling]
 
-    %% Stage 4
-    subgraph Stage 4: Model Training & Tuning
-        H --> J[Stratified 5-Fold Cross-Validation]
-        I --> J
-        J --> K[GridSearchCV Optimization]
-        K --> L(Logistic Regression Model)
-        K --> M(Support Vector Machine Model)
-    end
+    %% Stage 4: Training
+    H --> J[5-Fold CV]
+    I --> J
+    J --> K[GridSearchCV]
+    K --> L(Logistic Regression)
+    K --> M(SVM Model)
 
-    %% Stage 5
-    subgraph Stage 5: Evaluation & Output
-        L --> N{20% Hidden Test Set}
-        M --> N
-        N --> O[/Classification Report/]
-        N --> P[/Confusion Matrix Visual/]
-    end
-
-    %% Styling
-    classDef default fill:#f9f9f9,stroke:#333,stroke-width:1px;
-    classDef process fill:#e1f5fe,stroke:#0288d1,stroke-width:2px;
-    classDef decision fill:#fff3e0,stroke:#f57c00,stroke-width:2px;
-    
-    class A,D,O,P default;
-    class B,E,F,H,I,J,K,L,M process;
-    class C,G,N decision;
+    %% Stage 5: Output
+    L --> N{20% Test Set}
+    M --> N
+    N --> O[/Metrics Report/]
+    N --> P[/Confusion Matrix/]
 ```
 
 # **Building the Logistic Regression Model**
